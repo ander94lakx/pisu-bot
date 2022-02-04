@@ -231,7 +231,13 @@ def init():
 
     updater.start_polling()
 
-    schedule.every().hour.at(":00").do(update_channel)
+    schedule.every().day.at("09:00").do(update_channel)
+    schedule.every().day.at("11:00").do(update_channel)
+    schedule.every().day.at("13:00").do(update_channel)
+    schedule.every().day.at("15:00").do(update_channel)
+    schedule.every().day.at("17:00").do(update_channel)
+    schedule.every().day.at("19:00").do(update_channel)
+    schedule.every().day.at("21:00").do(update_channel)
 
     while True:
         schedule.run_pending()
