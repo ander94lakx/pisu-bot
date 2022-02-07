@@ -4,12 +4,15 @@ import os
 import re
 import schedule
 from selenium import webdriver
+import shelve
+from shelve import Shelf
 import telegram
 from telegram import Update
 from telegram.ext import CallbackContext
 from telegram.ext import CommandHandler
 from telegram.ext import Updater
 from time import sleep
+
 
 # Ordered URLs for requests to look for the cheapest prices around my city
 IDEALISTA_URL = 'https://www.idealista.com/alquiler-viviendas/vitoria-gasteiz-alava/?ordenado-por=precios-asc'
@@ -28,14 +31,18 @@ START_MESSAGE = ('Kaixo!\n\n'
                  '    /idealista\n'
                  '    /fotocasa\n\n'
                  'Komandoak pisua alokatzeko gastatu nahi duzun gehiena onartzen dute, adibidez:\n\n'
-                 '    /bilatu 650\n\n'
-                 'Balio lehenetsia 700 euro dira\n\n'
+                 '    /bilatu [euro]\n\n'
+                 'Balio lehenetsia aldatzeko edo ikusteko, erabili hurrengo komandoa:\n\n'
+                 '    /gehienekoa [euro]\n\n'
                  'Mila esker erabiltzeagatik!')
+
+# Configuration dict
+config: Shelf = None
 
 
 # Scrapping methods
 
-def scrap_idealista(max_price):
+def scrap_idealista():
     driver = initialize_driver(IDEALISTA_URL)
     scroll_down_and_up(driver)
 
@@ -61,7 +68,7 @@ def scrap_idealista(max_price):
         price_str = result.group(1).replace('.', '')
         price = int(price_str)
 
-        if price <= max_price:
+        if price <= config['top_price']:
             flat_list.append({ 
                 'link': link, 
                 'price': price,
@@ -73,7 +80,7 @@ def scrap_idealista(max_price):
     return flat_list
 
 
-def scrap_fotocasa(max_price):
+def scrap_fotocasa():
     driver = initialize_driver(FOTOCASA_URL)
     scroll_down_and_up(driver)
 
@@ -100,7 +107,7 @@ def scrap_fotocasa(max_price):
         price_str = result.group(1).replace('.', '')
         price = int(price_str)
 
-        if price <= max_price:
+        if price <= config['top_price']:
             flat_list.append({ 
                 'link': link, 
                 'price': price,
@@ -132,15 +139,7 @@ def scroll_down_and_up(driver):
     driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
     sleep(2)
     driver.execute_script('window.scrollTo(0, 0);')
-
-
-def get_max_price(context: CallbackContext):
-    global top_price
-    try:
-        return int(context.args[0])
-    except:
-        return top_price
-    
+   
 
 # Telegram stuff
 
@@ -160,14 +159,27 @@ def fotocasa(update: Update, context: CallbackContext):
     scrap(update, context, 'fotocasa')
 
 
+def gehienekoa(update: Update, context: CallbackContext):
+    try:
+        config['top_price'] = int(context.args[0])
+        config.sync()
+        context.bot.send_message(chat_id=update.effective_chat.id, \
+            text='Gehienekoa aldatuta! Oraingo balioa: '+config['top_price'])
+    except:
+        if context.args is not None and len(context.args) > 0 \
+            and context.args[0] == 'lehenetsia':
+            config['top_price'] = top_price
+        context.bot.send_message(chat_id=update.effective_chat.id, \
+            text=f'Oraingo balioa: {config["top_price"]}')
+    
+    
 def scrap(update: Update, context: CallbackContext, site):
     context.bot.send_message(chat_id=update.effective_chat.id, text=INITIAL_MESSAGE)
-    max_price = get_max_price(context)
     flat_list = []
     if site in { 'idealista', 'all' }:
-        flat_list.extend(scrap_idealista(max_price))
+        flat_list.extend(scrap_idealista())
     if site in { 'fotocasa', 'all' }:
-        flat_list.extend(scrap_fotocasa(max_price))
+        flat_list.extend(scrap_fotocasa())
     send_results(flat_list, update, context)
     context.bot.send_message(chat_id=update.effective_chat.id, text=FINAL_MESSAGE)
 
@@ -182,19 +194,18 @@ def update_channel():
     bot = telegram.Bot(token=token)
 
     # Remove previously sended messages
-    messages = []
-    with open('sent_messages.txt', 'r') as f:
-        for line in f.readlines():
-            messages.append(int(line))
+    messages = config['sent_messages']
     while messages:
         try:
             bot.delete_message(chat_id=channel_id, message_id=messages.pop())
         except Exception as e: print(e)
+    del config['sent_messages']
+    config.sync()
 
     # Scrap all with the defaul top price
     flat_list = []
-    flat_list.extend(scrap_idealista(top_price))
-    flat_list.extend(scrap_fotocasa(top_price))
+    flat_list.extend(scrap_idealista())
+    flat_list.extend(scrap_fotocasa())
 
     # Send the messages with the info
     # Saves the message_id of the messages to be able to delete them on the next one
@@ -204,15 +215,22 @@ def update_channel():
         sleep(1)
     messages.append(bot.send_message(chat_id=channel_id, text=FINAL_MESSAGE, disable_notification=True).message_id)
 
-    with open('sent_messages.txt', 'w') as f:
-        for message in messages:
-            f.write(str(message) + '\n')
+    config['sent_messages'] = messages
+    config.sync()
+
 
 # Main
 
 def init():
 
     load_dotenv()
+
+    global config, top_price
+    config = shelve.open('config')
+    if not 'top_price' in config:
+        config['top_price'] = top_price
+    if not 'sent_messages' in config:
+        config['sent_messages'] = []
 
     token = os.getenv('TOKEN')
 
@@ -226,6 +244,7 @@ def init():
     dispatcher.add_handler(CommandHandler('bilatu', bilatu))
     dispatcher.add_handler(CommandHandler('idealista', idealista))
     dispatcher.add_handler(CommandHandler('fotocasa', fotocasa))
+    dispatcher.add_handler(CommandHandler('gehienekoa', gehienekoa))
 
     updater.start_polling()
 
@@ -237,6 +256,8 @@ def init():
     schedule.every().day.at("19:00").do(update_channel)
     schedule.every().day.at("21:00").do(update_channel)
     schedule.every().day.at("23:00").do(update_channel)
+
+    update_channel()
 
     while True:
         schedule.run_pending()
