@@ -219,6 +219,7 @@ def update_channel():
     config.sync()
 
 
+
 # Main
 
 def init():
@@ -231,6 +232,7 @@ def init():
         config['top_price'] = top_price
     if not 'sent_messages' in config:
         config['sent_messages'] = []
+
 
     token = os.getenv('TOKEN')
 
