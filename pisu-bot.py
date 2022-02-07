@@ -1,24 +1,37 @@
-import re
+from dotenv import load_dotenv
 import logging
-from time import sleep
-from typing import List
-
-from selenium import webdriver
-
+import os
+import re
 import schedule
-
+from selenium import webdriver
 import telegram
-from telegram import Bot, Update
-from telegram.ext import Updater
+from telegram import Update
 from telegram.ext import CallbackContext
 from telegram.ext import CommandHandler
+from telegram.ext import Updater
+from time import sleep
 
 # Ordered URLs for requests to look for the cheapest prices around my city
-
 IDEALISTA_URL = 'https://www.idealista.com/alquiler-viviendas/vitoria-gasteiz-alava/?ordenado-por=precios-asc'
 FOTOCASA_URL = 'https://www.fotocasa.es/es/alquiler/viviendas/vitoria-gasteiz/todas-las-zonas/l?sortType=price&sortOrderDesc=false&latitude=42.8517&longitude=-2.67141&combinedLocationIds=724,18,1,439,0,1059,0,0,0'
 
+# Default top price for channel messages and when no prices is specified
 top_price = 700
+
+# Messages
+INITIAL_MESSAGE = 'Emaidazu minutu bat!'
+INITIAL_AUTO_MESSAGE = 'Kaixo! Hamen dauzkazu oraintxe bertan dauden pisuak:'
+FINAL_MESSAGE = 'Hortxe dauzkazu!'
+START_MESSAGE = ('Kaixo!\n\n'
+                 'Pisuak bilatzeko /bilatu komandoa erabili, mesedez!\n\n'
+                 'Zerbitzu bakar bat erabiltezko, hurrengo komandoak dauzkazu:\n\n'
+                 '    /idealista\n'
+                 '    /fotocasa\n\n'
+                 'Komandoak pisua alokatzeko gastatu nahi duzun gehiena onartzen dute, adibidez:\n\n'
+                 '    /bilatu 650\n\n'
+                 'Balio lehenetsia 700 euro dira\n\n'
+                 'Mila esker erabiltzeagatik!')
+
 
 # Scrapping methods
 
@@ -132,16 +145,7 @@ def get_max_price(context: CallbackContext):
 # Telegram stuff
 
 def start(update: Update, context: CallbackContext):
-    start_msg = ('Kaixo!\n\n'
-                'Pisuak bilatzeko /bilatu komandoa erabili, mesedez!\n\n'
-                'Zerbitzu bakar bat erabiltezko, hurrengo komandoak dauzkazu:\n\n'
-                '    /idealista\n'
-                '    /fotocasa\n\n'
-                'Komandoak pisua alokatzeko gastatu nahi duzun gehiena onartzen dute, adibidez:\n\n'
-                '    /bilatu 650\n\n'
-                'Balio lehenetsia 700 euro dira\n\n'
-                'Mila esker erabiltzeagatik!')
-    context.bot.send_message(chat_id=update.effective_chat.id, text=start_msg)
+    context.bot.send_message(chat_id=update.effective_chat.id, text=START_MESSAGE)
 
 
 def bilatu(update: Update, context: CallbackContext):
@@ -157,7 +161,7 @@ def fotocasa(update: Update, context: CallbackContext):
 
 
 def scrap(update: Update, context: CallbackContext, site):
-    send_initial_message(context, update)
+    context.bot.send_message(chat_id=update.effective_chat.id, text=INITIAL_MESSAGE)
     max_price = get_max_price(context)
     flat_list = []
     if site in { 'idealista', 'all' }:
@@ -165,35 +169,27 @@ def scrap(update: Update, context: CallbackContext, site):
     if site in { 'fotocasa', 'all' }:
         flat_list.extend(scrap_fotocasa(max_price))
     send_results(flat_list, update, context)
-    send_final_message(context, update)
-
-
-def send_initial_message(context, update):
-    context.bot.send_message(chat_id=update.effective_chat.id, text='Emaidazu minutu bat!')
-
-
-def send_final_message(context, update):
-    context.bot.send_message(chat_id=update.effective_chat.id, text='Hortxe dauzkazu!')
+    context.bot.send_message(chat_id=update.effective_chat.id, text=FINAL_MESSAGE)
 
 
 # Scheduled task stuff
 
 def update_channel():
     # Get channel and bot info
-    with open('token.txt') as f:
-        token = f.read()
-    with open('channel_id.txt') as f:
-        channel_id = f.read()
+    token = os.getenv('TOKEN')
+    channel_id = os.getenv('CHANNEL_ID')
 
     bot = telegram.Bot(token=token)
 
     # Remove previously sended messages
-    stacked_messages = []
+    messages = []
     with open('sent_messages.txt', 'r') as f:
         for line in f.readlines():
-            stacked_messages.append(int(line))
-    while stacked_messages:
-        bot.delete_message(chat_id=channel_id, message_id=stacked_messages.pop())
+            messages.append(int(line))
+    while messages:
+        try:
+            bot.delete_message(chat_id=channel_id, message_id=messages.pop())
+        except Exception as e: print(e)
 
     # Scrap all with the defaul top price
     flat_list = []
@@ -202,21 +198,23 @@ def update_channel():
 
     # Send the messages with the info
     # Saves the message_id of the messages to be able to delete them on the next one
-    stacked_messages.append(bot.send_message(chat_id=channel_id, text='Kaixo! Hamen dauzkazu oraintxe bertan dauden pisuak:').message_id)
+    messages.append(bot.send_message(chat_id=channel_id, text=INITIAL_AUTO_MESSAGE, disable_notification=True).message_id)
     for flat in flat_list:
-        stacked_messages.append(bot.send_photo(chat_id=channel_id, caption=flat['link'], photo=flat['image']).message_id)
+        messages.append(bot.send_photo(chat_id=channel_id, caption=flat['link'], photo=flat['image'], disable_notification=True).message_id)
         sleep(1)
-    stacked_messages.append(bot.send_message(chat_id=channel_id, text='Hortxe dauzkazu!').message_id)
+    messages.append(bot.send_message(chat_id=channel_id, text=FINAL_MESSAGE, disable_notification=True).message_id)
 
     with open('sent_messages.txt', 'w') as f:
-        for message in stacked_messages:
+        for message in messages:
             f.write(str(message) + '\n')
 
 # Main
 
 def init():
-    with open('token.txt') as f:
-        token = f.read()
+
+    load_dotenv()
+
+    token = os.getenv('TOKEN')
 
     updater = Updater(token=token, use_context=True)
     dispatcher = updater.dispatcher
@@ -238,6 +236,7 @@ def init():
     schedule.every().day.at("17:00").do(update_channel)
     schedule.every().day.at("19:00").do(update_channel)
     schedule.every().day.at("21:00").do(update_channel)
+    schedule.every().day.at("23:00").do(update_channel)
 
     while True:
         schedule.run_pending()
