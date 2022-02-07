@@ -2,3 +2,4 @@
 .vscode
 sent_messages.txt
 *.exe
+config.*
