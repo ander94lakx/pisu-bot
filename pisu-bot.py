@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from dotenv import load_dotenv
 import logging
 import os
@@ -24,6 +25,8 @@ top_price = 700
 # Messages
 INITIAL_MESSAGE = 'Emaidazu minutu bat!'
 INITIAL_AUTO_MESSAGE = 'Kaixo! Hamen dauzkazu oraintxe bertan dauden pisuak:'
+OLD_FLATS_MESSAGE = 'Pisu hauek oraindik eskuragai daude:'
+NEW_FLATS_MESSAGE = 'ADI!!\nPisu hauek berriak dira!'
 FINAL_MESSAGE = 'Hortxe dauzkazu!'
 START_MESSAGE = ('Kaixo!\n\n'
                  'Pisuak bilatzeko /bilatu komandoa erabili, mesedez!\n\n'
@@ -38,6 +41,13 @@ START_MESSAGE = ('Kaixo!\n\n'
 
 # Configuration dict
 config: Shelf = None
+
+
+@dataclass
+class Flat:
+    link: str
+    price: str
+    image: bytes
 
 
 # Scrapping methods
@@ -69,12 +79,7 @@ def scrap_idealista():
         price = int(price_str)
 
         if price <= config['top_price']:
-            flat_list.append({ 
-                'link': link, 
-                'price': price,
-                'image': item.screenshot_as_png, 
-                'image_name': f'{item.id}.png' 
-            })
+            flat_list.append(Flat(link, price, item.screenshot_as_png))
     
     driver.quit()
     return flat_list
@@ -108,19 +113,15 @@ def scrap_fotocasa():
         price = int(price_str)
 
         if price <= config['top_price']:
-            flat_list.append({ 
-                'link': link, 
-                'price': price,
-                'image': item.screenshot_as_png
-            })
+            flat_list.append(Flat(link, price, item.screenshot_as_png))
     
     driver.quit()
     return flat_list
 
 
-def send_results(flat_list: list, update: Update, context: CallbackContext):
+def send_results(flat_list: list[Flat], update: Update, context: CallbackContext):
     for flat in flat_list:
-        context.bot.send_photo(chat_id=update.effective_chat.id, caption=flat['link'], photo=flat['image'])
+        context.bot.send_photo(chat_id=update.effective_chat.id, caption=flat.link, photo=flat.inmage)
         sleep(1)
 
 
@@ -202,22 +203,53 @@ def update_channel():
             logging.error(e)
     del config['sent_messages']
     config.sync()
+  
 
     # Scrap all with the defaul top price
-    flat_list = []
-    flat_list.extend(scrap_idealista())
-    flat_list.extend(scrap_fotocasa())
+    flats_list = []
+    flats_list.extend(scrap_idealista())
+    flats_list.extend(scrap_fotocasa())
+
+    old_flats, new_flats = get_old_and_new_flats(flats_list)
 
     # Send the messages with the info
     # Saves the message_id of the messages to be able to delete them on the next one
     messages.append(bot.send_message(chat_id=channel_id, text=INITIAL_AUTO_MESSAGE, disable_notification=True).message_id)
-    for flat in flat_list:
-        messages.append(bot.send_photo(chat_id=channel_id, caption=flat['link'], photo=flat['image'], disable_notification=True).message_id)
-        sleep(1)
+
+    if old_flats:
+        messages.append(bot.send_message(chat_id=channel_id, text=OLD_FLATS_MESSAGE, disable_notification=True).message_id)
+        for flat in old_flats:
+            messages.append(bot.send_photo(chat_id=channel_id, caption=flat.link, photo=flat.image, disable_notification=True).message_id)
+            sleep(1)
+
+    if new_flats:
+        messages.append(bot.send_message(chat_id=channel_id, text=NEW_FLATS_MESSAGE, disable_notification=True).message_id)
+        for flat in new_flats:
+            messages.append(bot.send_photo(chat_id=channel_id, caption=flat.link, photo=flat.image, disable_notification=True).message_id)
+            sleep(1)
+
     messages.append(bot.send_message(chat_id=channel_id, text=FINAL_MESSAGE, disable_notification=True).message_id)
 
     config['sent_messages'] = messages
     config.sync()
+
+
+def get_old_and_new_flats(flat_list):
+
+    old_flats = []
+    new_flats = []
+    saved_flats = config['previous_flats']
+
+    for flat in flat_list:
+        if flat.link in saved_flats:
+            old_flats.append(flat)
+        else:
+            new_flats.append(flat)
+    
+    config['previous_flats'] = [flat.link for flat in flat_list]
+    config.sync()
+
+    return old_flats, new_flats
 
 
 # Main
@@ -232,6 +264,8 @@ def init():
         config['top_price'] = top_price
     if not 'sent_messages' in config:
         config['sent_messages'] = []
+    if not 'previous_flats' in config:
+        config['previous_flats'] = []
 
 
     token = os.getenv('TOKEN')
