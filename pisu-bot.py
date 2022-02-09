@@ -49,7 +49,7 @@ def scrap_idealista():
     # Be kind and accept the cookies
     try:
         driver.find_element_by_id('didomi-notice-agree-button').click()
-    except:
+    except Exception:
         pass # No cookies button, no problem!
 
     # Find each flat element
@@ -73,7 +73,7 @@ def scrap_idealista():
                 'link': link, 
                 'price': price,
                 'image': item.screenshot_as_png, 
-                'image_name': item.id + '.png' 
+                'image_name': f'{item.id}.png' 
             })
     
     driver.quit()
@@ -88,7 +88,7 @@ def scrap_fotocasa():
     try:
         elem = driver.find_element_by_xpath('//button[@data-testid="TcfAccept"]')
         elem.click()
-    except:
+    except Exception:
         pass # No cookies button, no problem!
 
     # Find each flat element
@@ -164,8 +164,8 @@ def gehienekoa(update: Update, context: CallbackContext):
         config['top_price'] = int(context.args[0])
         config.sync()
         context.bot.send_message(chat_id=update.effective_chat.id, \
-            text='Gehienekoa aldatuta! Oraingo balioa: '+config['top_price'])
-    except:
+            text=f'Gehienekoa aldatuta! Oraingo balioa: {config["top_price"]}')
+    except Exception:
         if context.args is not None and len(context.args) > 0 \
             and context.args[0] == 'lehenetsia':
             config['top_price'] = top_price
@@ -195,10 +195,11 @@ def update_channel():
 
     # Remove previously sended messages
     messages = config['sent_messages']
-    while messages:
+    for message in messages:
         try:
-            bot.delete_message(chat_id=channel_id, message_id=messages.pop())
-        except Exception as e: print(e)
+            bot.delete_message(chat_id=channel_id, message_id=message)
+        except Exception as e: 
+            logging.error(e)
     del config['sent_messages']
     config.sync()
 
@@ -217,7 +218,6 @@ def update_channel():
 
     config['sent_messages'] = messages
     config.sync()
-
 
 
 # Main
