@@ -3,3 +3,4 @@
 sent_messages.txt
 *.exe
 config.*
+__pycache__

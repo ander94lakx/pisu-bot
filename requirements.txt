@@ -1,4 +1,4 @@
-selenium
-python-telegram-bot
-schedule
-python-dotenv
+selenium==4.6.0
+python-telegram-bot==13.14
+schedule==1.1.0
+python-dotenv==0.21.0
